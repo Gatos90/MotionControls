@@ -6,7 +6,7 @@ from PIL import Image, ImageTk
 mp_drawing = mp.solutions.drawing_utils
 mp_holistic = mp.solutions.holistic
 
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(0)
 
 prev_y = [None] * 4
 velocity = [0] * 4

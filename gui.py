@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 from motion_tracking import Track_Object
-import time  # Added for FPS calculation
+import time
 import threading
 
 
@@ -37,27 +37,59 @@ class Window(Frame):
         Frame.__init__(self, master)
         self.master = master
         self.pack(fill=BOTH, expand=1)
+
+        self.event_log = Listbox(self, height=8, width=50)
+        self.scrollbar = Scrollbar(self, orient="vertical")
+        self.event_log.configure(yscrollcommand=self.scrollbar.set)
+        self.scrollbar.config(command=self.event_log.yview)
+
+        self.scrollbar.pack(side="right", fill="y")
+        self.event_log.pack(side="left")
+
+        self.toggle_button = Button(
+            self, text="Toggle Video", command=self.toggle_video
+        )
+        self.toggle_button.pack()
+
         self.image_label = Label(self)
         self.image_label.pack()
 
+        self.thread = None
+
+        self.show_video = True
+
+    def start_thread(self):
         self.thread = VideoCaptureThread(self.update_image, self.update_fps)
         self.thread.start()
 
     def update_image(self, cv_img):
-        cv2image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGBA)
-        img = Image.fromarray(cv2image)
-        imgtk = ImageTk.PhotoImage(image=img)
-        self.image_label.config(image=imgtk)
-        self.image_label.image = imgtk
+        if self.show_video:
+            img = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
+            imgtk = ImageTk.PhotoImage(image=img)
+
+            self.image_label.config(image=imgtk)
+            self.image_label.image = imgtk
+
+    def toggle_video(self):
+        self.show_video = not self.show_video
+        if self.show_video:
+            self.image_label.pack()
+        else:
+            self.image_label.pack_forget()
+            self.log_event(f"Video toggled {'on' if self.show_video else 'off'}")
 
     def update_fps(self, fps):
-        # You can update a label or any other widget with the FPS value here.
-        pass
+        self.log_event(f"FPS updated to {fps}")
+
+    def log_event(self, event):
+        timestamp = time.strftime("%H:%M:%S", time.localtime())
+        self.event_log.insert(0, f"{timestamp}: {event}")
 
 
 if __name__ == "__main__":
     root = Tk()
     app = Window(root)
+    app.start_thread()
     root.wm_title("Tkinter window")
     root.geometry("600x450")
     root.mainloop()

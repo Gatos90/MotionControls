@@ -1,15 +1,17 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout
-from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
+from tkinter import *
 import cv2
 import numpy as np
+from PIL import Image, ImageTk
 from motion_tracking import Track_Object
 import time  # Added for FPS calculation
+import threading
 
 
-class ThreadClass(QThread):
-    send_image = pyqtSignal(np.ndarray)
-    FPS = pyqtSignal(int)  # Signal for FPS
+class VideoCaptureThread(threading.Thread):
+    def __init__(self, callback_image, callback_fps):
+        super().__init__()
+        self.callback_image = callback_image
+        self.callback_fps = callback_fps
 
     def run(self):
         video_capture = cv2.VideoCapture(0)
@@ -19,45 +21,43 @@ class ThreadClass(QThread):
         while True:
             _, frame = video_capture.read()
             tracked_frame = tracker.process_image(frame)
-            
+
             # FPS Calculation
             new_frame_time = time.time()
             fps = 1 / (new_frame_time - prev_frame_time)
             prev_frame_time = new_frame_time
-            self.FPS.emit(int(fps))
-            
+            self.callback_fps(int(fps))
+
             if tracked_frame is not None:
-                self.send_image.emit(tracked_frame)
+                self.callback_image(tracked_frame)
 
 
-class Window(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.image_label = QLabel(self)
-        layout = QVBoxLayout()
-        layout.addWidget(self.image_label)
-        self.setLayout(layout)
+class Window(Frame):
+    def __init__(self, master=None):
+        Frame.__init__(self, master)
+        self.master = master
+        self.pack(fill=BOTH, expand=1)
+        self.image_label = Label(self)
+        self.image_label.pack()
 
-        self.thread = ThreadClass()
-        self.thread.send_image.connect(self.update_image)
-        self.thread.FPS.connect(self.update_fps)  # Connect the FPS signal
+        self.thread = VideoCaptureThread(self.update_image, self.update_fps)
         self.thread.start()
 
-    @pyqtSlot(np.ndarray)
     def update_image(self, cv_img):
-        height, width, channel = cv_img.shape
-        bytes_per_line = 3 * width
-        qt_image = QImage(cv_img.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
-        self.image_label.setPixmap(QPixmap.fromImage(qt_image))
+        cv2image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGBA)
+        img = Image.fromarray(cv2image)
+        imgtk = ImageTk.PhotoImage(image=img)
+        self.image_label.config(image=imgtk)
+        self.image_label.image = imgtk
 
-    @pyqtSlot(int)
     def update_fps(self, fps):
         # You can update a label or any other widget with the FPS value here.
         pass
 
 
 if __name__ == "__main__":
-    app = QApplication([])
-    win = Window()
-    win.show()
-    app.exec_()
+    root = Tk()
+    app = Window(root)
+    root.wm_title("Tkinter window")
+    root.geometry("600x450")
+    root.mainloop()

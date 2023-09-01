@@ -6,6 +6,7 @@ import time
 import threading
 from queue import Queue  # Import the Queue class
 
+
 MAX_QUEUE_SIZE = 10
 
 

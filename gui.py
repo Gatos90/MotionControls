@@ -17,7 +17,7 @@ class VideoCaptureThread(threading.Thread):
         self.tracker = Track_Object()
 
     def run(self):
-        video_capture = cv2.VideoCapture(0)
+        video_capture = cv2.VideoCapture(1)
         prev_frame_time = 0
         new_frame_time = 0
         while True:

@@ -18,7 +18,9 @@ class VideoCaptureThread(threading.Thread):
         self.tracker = Track_Object()
 
     def run(self):
-        video_capture = cv2.VideoCapture(0)
+        video_capture = cv2.VideoCapture(1)
+        video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 540)
+        video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
         prev_frame_time = 0
         new_frame_time = 0
         while True:
@@ -47,6 +49,10 @@ class Window(Frame):
         self.master = master
         self.pack(fill=BOTH, expand=1)
         self.X_train = None
+        
+        self.left_hand_var = BooleanVar()
+        self.right_hand_var = BooleanVar()
+        self.body_var = BooleanVar()
 
         self.event_log = Listbox(self, height=8, width=50)
         self.scrollbar = Scrollbar(self, orient="vertical")
@@ -59,6 +65,17 @@ class Window(Frame):
         self.image_label = Label(self)
         self.image_label.pack()
 
+        self.class_name_var = StringVar()
+        self.class_name_var.trace('w', self.validate_class_name)
+
+        self.class_name_entry = Entry(self, textvariable=self.class_name_var)
+        self.class_name_entry.pack(pady=5)
+
+        self.start_export_button = Button(
+            self, text="Start Export", command=self.set_class_and_start_export, state=DISABLED
+        )
+        self.start_export_button.pack()
+
         self.queue = Queue()  # Create a queue instance
         self.thread = VideoCaptureThread(
             self.queue, self.update_fps
@@ -69,13 +86,16 @@ class Window(Frame):
 
         self.class_name_label = Label(self, text="Class Name:")
         self.class_name_label.pack(pady=5)  # add some padding for aesthetics
+        
+        self.left_hand_cb = Checkbutton(self, text="Left Hand", variable=self.left_hand_var, command= self.update_checkbox)
+        self.left_hand_cb.pack()
 
-        self.class_name_entry = Entry(self)
-        self.class_name_entry.pack(pady=5)
+        self.right_hand_cb = Checkbutton(self, text="Right Hand", variable=self.right_hand_var, command= self.update_checkbox)
+        self.right_hand_cb.pack() 
 
-        self.start_export_button = Button(
-            self, text="Start Export", command=self.set_class_and_start_export
-        )
+        self.body_cb = Checkbutton(self, text="Body", variable=self.body_var, command= self.update_checkbox)
+        self.body_cb.pack()
+            
         self.start_export_button.pack()
 
         self.toggle_button = Button(
@@ -97,6 +117,15 @@ class Window(Frame):
 
         self.after(100, self.check_queue)  # Start checking the queue
 
+    def update_checkbox(self):
+        is_left_hand_checked = self.left_hand_var.get()
+        is_right_hand_checked = self.right_hand_var.get()
+        is_body_checked = self.body_var.get()
+       
+        self.thread.tracker.set_export_left_hand(True if is_left_hand_checked else False)
+        self.thread.tracker.set_export_right_hand(True if is_right_hand_checked else False)
+        self.thread.tracker.set_export_body_pose(True if is_body_checked else False)
+    
     def check_queue(self):
         while not self.queue.empty():
             item_type, item_data = self.queue.get()
@@ -136,6 +165,12 @@ class Window(Frame):
         self.thread.tracker.set_class_name(class_name)
         self.thread.tracker.start_export()
 
+    def validate_class_name(self, *args):
+        class_name = self.class_name_entry.get()
+        if class_name:
+            self.start_export_button.config(state=NORMAL)  # Enable the button
+        else:
+            self.start_export_button.config(state=DISABLED)
 
 if __name__ == "__main__":
     root = Tk()

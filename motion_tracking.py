@@ -13,7 +13,8 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.metrics import accuracy_score
 import pickle
 from sklearn.svm import OneClassSVM
-
+import pdb
+import traceback
 
 CSV_DIR = "models/cords"
 MODEL_DIR = "models/models"
@@ -25,12 +26,17 @@ class Track_Object:
         self.current_class_name = "DefaultClass"
         self.should_show_image = False
         self.exporting = False
+        self.exportingLeftHand = False
+        self.exportingRightHand = False
+        self.exportingBodyPose = False
         self.should_train = False  # Flag to determine if training should occur
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_holistic = mp.solutions.holistic
         self.mp_drawing_styles = mp.solutions.drawing_styles
         self.holistic = self.mp_holistic.Holistic(
-            min_detection_confidence=0.5, min_tracking_confidence=0.5
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+            static_image_mode=True,
         )
         self.models = self.load_all_models("models/models/")
         self.palm_start_time = None
@@ -46,20 +52,61 @@ class Track_Object:
         self.loading_time = end_time - start_time
 
         # Load feature names here
-        with open("models/features/feature_names.txt", "r") as f:
-            self.feature_names = [line.strip() for line in f]
+        self.feature_names = {}
+        for filename in os.listdir(FEATURE_DIR):
+            if filename.endswith(".txt"):
+                model_name = filename[
+                    :-4
+                ]  # removing the .txt extension to get the model name
+                with open(os.path.join(FEATURE_DIR, filename), "r") as f:
+                    self.feature_names[model_name] = [line.strip() for line in f]
 
-    def get_csv_path(self):
-        """Returns the path to the CSV for the current class."""
-        return os.path.join(CSV_DIR, f"coords_{self.current_class_name}.csv")
+    def get_csv_path_pose(self):
+        """Returns the path to the Pose CSV for the current class."""
+        return os.path.join(CSV_DIR, f"pose_coords_{self.current_class_name}.csv")
+
+    def get_csv_path_right_hand(self):
+        """Returns the path to the Hand CSV for the current class."""
+        return os.path.join(CSV_DIR, f"right_hand_coords_{self.current_class_name}.csv")
+
+    def get_csv_path_left_hand(self):
+        """Returns the path to the Hand CSV for the current class."""
+        return os.path.join(CSV_DIR, f"left_hand_coords_{self.current_class_name}.csv")
+
+    def set_export_left_hand(self, value):
+        self.exportingLeftHand = value
+
+    def set_export_right_hand(self, value):
+        self.exportingRightHand = value
+
+    def set_export_body_pose(self, value):
+        self.exportingBodyPose = value
 
     def get_model_path(self):
         """Returns the path to the model for the current class."""
-        return os.path.join(MODEL_DIR, f"body_language_{self.current_class_name}.pkl")
+        if self.exportingLeftHand:
+            return os.path.join(MODEL_DIR, f"left_hand_{self.current_class_name}.pkl")
+        if self.exportingRightHand:
+            return os.path.join(MODEL_DIR, f"right_hand_{self.current_class_name}.pkl")
+        if self.exportingBodyPose:
+            return os.path.join(
+                MODEL_DIR, f"body_language_{self.current_class_name}.pkl"
+            )
 
     def get_feature_path(self):
         """Returns the path to the feature names file for the current class."""
-        return os.path.join(FEATURE_DIR, f"features_{self.current_class_name}.txt")
+        if self.exportingLeftHand:
+            return os.path.join(
+                FEATURE_DIR, f"left_hand_{self.current_class_name}.txt"
+            )
+        if self.exportingRightHand:
+            return os.path.join(
+                FEATURE_DIR, f"right_hand_{self.current_class_name}.txt"
+            )
+        if self.exportingBodyPose:
+            return os.path.join(
+                FEATURE_DIR, f"body_pose_{self.current_class_name}.txt"
+            )
 
     def load_all_models(self, directory_path):
         model_files = [f for f in os.listdir(directory_path) if f.endswith(".pkl")]
@@ -83,19 +130,11 @@ class Track_Object:
 
     def process_image(self, frame):
         start_time = time.time()
-        image = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
+        image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image.flags.writeable = False
         results = self.holistic.process(image)
         image.flags.writeable = True
 
-        if results.face_landmarks:
-            self.draw_landmarks(
-                image,
-                results.face_landmarks,
-                self.mp_holistic.FACEMESH_TESSELATION,
-                (80, 110, 10),
-                (80, 256, 121),
-            )
         self.draw_landmarks(
             image,
             results.right_hand_landmarks,
@@ -117,6 +156,11 @@ class Track_Object:
             (245, 117, 66),
             (245, 66, 230),
         )
+
+        brect = self.calc_bounding_rect(image, results.right_hand_landmarks)
+
+        if brect is not None:
+            self.draw_bounding_rect(True, image, brect)
 
         if self.exporting:
             self.export_coordinates_to_csv(results)
@@ -140,57 +184,140 @@ class Track_Object:
         end_time = time.time()
 
     def export_coordinates_to_csv(self, results):
-        num_coords = len(results.pose_landmarks.landmark) + len(
-            results.face_landmarks.landmark
-        )
-        landmarks = ["class"]
-        for val in range(1, num_coords + 1):
-            landmarks += [
+        if results.pose_landmarks:
+            num_coords_pose = len(results.pose_landmarks.landmark)
+        else:
+            num_coords_pose = 0
+        landmarks_pose = ["class"]
+        for val in range(1, num_coords_pose + 1):
+            landmarks_pose += [
                 "x{}".format(val),
                 "y{}".format(val),
                 "z{}".format(val),
                 "v{}".format(val),
             ]
 
-        if (
-            not os.path.exists(self.get_csv_path())
-            or os.stat(self.get_csv_path()).st_size == 0
-        ):
-            with open(self.get_csv_path(), mode="w", newline="") as f:
-                csv_writer = csv.writer(
-                    f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
-                )
-                csv_writer.writerow(landmarks)
+        # Get hand landmarks
+        if results.right_hand_landmarks:
+            num_coords_hand = len(results.right_hand_landmarks.landmark)
+        else:
+            num_coords_hand = 0
+        landmarks_hand = ["class"]
+        for val in range(1, num_coords_hand + 1):
+            landmarks_hand += [
+                "x{}".format(val),
+                "y{}".format(val),
+                "z{}".format(val),
+                "v{}".format(val),
+            ]
+
+        if results.left_hand_landmarks:
+            num_coords_hand = len(results.left_hand_landmarks.landmark)
+        else:
+            num_coords_hand = 0
+        landmarks_hand = ["class"]
+        for val in range(1, num_coords_hand + 1):
+            landmarks_hand += [
+                "x{}".format(val),
+                "y{}".format(val),
+                "z{}".format(val),
+                "v{}".format(val),
+            ]
 
         class_name = self.current_class_name
-        try:
-            pose = results.pose_landmarks.landmark
-            pose_row = list(
-                np.array(
-                    [
-                        [landmark.x, landmark.y, landmark.z, landmark.visibility]
-                        for landmark in pose
-                    ]
-                ).flatten()
-            )
-            face = results.face_landmarks.landmark
-            face_row = list(
-                np.array(
-                    [
-                        [landmark.x, landmark.y, landmark.z, landmark.visibility]
-                        for landmark in face
-                    ]
-                ).flatten()
-            )
-            row = pose_row + face_row
-            row.insert(0, class_name)
-            with open(self.get_csv_path(), mode="a", newline="") as f:
-                csv_writer = csv.writer(
-                    f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+
+        # Log pose landmarks if checkbox is checked
+        if self.exportingBodyPose and results.pose_landmarks:
+            if not os.path.exists(self.get_csv_path_pose()):
+                with open(self.get_csv_path_pose(), mode="w", newline="") as f:
+                    csv_writer = csv.writer(
+                        f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+                    )
+                    csv_writer.writerow(landmarks_pose)
+            try:
+                pose = results.pose_landmarks.landmark
+                pose_row = list(
+                    np.array(
+                        [
+                            [landmark.x, landmark.y, landmark.z, landmark.visibility]
+                            for landmark in pose
+                        ]
+                    ).flatten()
                 )
-                csv_writer.writerow(row)
-        except Exception as e:
-            print(f"Error exporting coordinates to CSV: {e}")
+                row_pose = pose_row
+                row_pose.insert(0, class_name)
+                with open(self.get_csv_path_pose(), mode="a", newline="") as f:
+                    csv_writer = csv.writer(
+                        f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+                    )
+                    csv_writer.writerow(row_pose)
+            except Exception as e:
+                print(f"Error exporting coordinates to CSV: {e}")
+
+        # Log left hand landmarks if checkbox is checked
+        if self.exportingLeftHand and results.left_hand_landmarks:
+            if not os.path.exists(self.get_feature_path()):
+                with open(self.get_feature_path(), mode="w", newline="") as f:
+                    for val in ["class"] + landmarks_hand[1:]:
+                        f.write(val + "\n")
+            if not os.path.exists(self.get_csv_path_left_hand()):
+                with open(self.get_csv_path_left_hand(), mode="w", newline="") as f:
+                    csv_writer = csv.writer(
+                        f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+                    )
+                    csv_writer.writerow(landmarks_hand)
+            try:
+                hand = results.left_hand_landmarks.landmark
+                hand_row = list(
+                    np.array(
+                        [
+                            [landmark.x, landmark.y, landmark.z, landmark.visibility]
+                            for landmark in hand
+                        ]
+                    ).flatten()
+                )
+                row_hand = hand_row
+                row_hand.insert(0, class_name)
+                with open(self.get_csv_path_left_hand(), mode="a", newline="") as f:
+                    csv_writer = csv.writer(
+                        f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+                    )
+                    csv_writer.writerow(row_hand)
+            except Exception as e:
+                print(f"Error exporting coordinates to CSV: {e}")
+
+        # Log right hand landmarks if checkbox is checked
+        if self.exportingRightHand and results.right_hand_landmarks:
+            if not os.path.exists(self.get_feature_path()):
+                with open(self.get_feature_path(), mode="w", newline="") as f:
+                    for val in ["class"] + landmarks_hand[1:]:
+                        f.write(val + "\n")
+            if not os.path.exists(self.get_csv_path_right_hand()):
+                with open(self.get_csv_path_right_hand(), mode="w", newline="") as f:
+                    csv_writer = csv.writer(
+                        f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+                    )
+                    csv_writer.writerow(landmarks_hand)
+
+            try:
+                hand = results.right_hand_landmarks.landmark
+                hand_row = list(
+                    np.array(
+                        [
+                            [landmark.x, landmark.y, landmark.z, landmark.visibility]
+                            for landmark in hand
+                        ]
+                    ).flatten()
+                )
+                row_hand = hand_row
+                row_hand.insert(0, class_name)
+                with open(self.get_csv_path_right_hand(), mode="a", newline="") as f:
+                    csv_writer = csv.writer(
+                        f, delimiter=",", quotechar='"', quoting=csv.QUOTE_MINIMAL
+                    )
+                    csv_writer.writerow(row_hand)
+            except Exception as e:
+                print(f"Error exporting coordinates to CSV: {e}")
 
     def __del__(self):
         self.holistic.close()
@@ -209,7 +336,12 @@ class Track_Object:
 
     def train_model(self):
         start_time = time.time()  # Record the start time
-        df = pd.read_csv(self.get_csv_path())
+        if self.exportingRightHand:
+            df = pd.read_csv(self.get_csv_path_right_hand())
+        if self.exportingLeftHand:
+            df = pd.read_csv(self.get_csv_path_left_hand())
+        if self.exportingBodyPose:
+            df = pd.read_csv(self.get_csv_path_pose())
         X = df.drop("class", axis=1)
         y = df["class"]
 
@@ -239,119 +371,194 @@ class Track_Object:
         print(f"The train_model execution time : {end_time - start_time} seconds")
 
     def predict_model(self, image, results):
+        #pdb.set_trace()
         for model_name, model in self.models.items():
-            print(self.models.items())
-            # You can use the model_name for any labeling or printing needs
-            pose = results.pose_landmarks.landmark
-            pose_row = list(
-                np.array(
-                    [
-                        [landmark.x, landmark.y, landmark.z, landmark.visibility]
-                        for landmark in pose
-                    ]
-                ).flatten()
-            )
-            face = results.face_landmarks.landmark
-            face_row = list(
-                np.array(
-                    [
-                        [landmark.x, landmark.y, landmark.z, landmark.visibility]
-                        for landmark in face
-                    ]
-                ).flatten()
-            )
-
-            row = pose_row + face_row
-            X = pd.DataFrame([row], columns=self.feature_names)
-            body_language_class = model.predict(X)[0]  # Change here
-            body_language_prob = model.predict_proba(X)[0]  # And here
-            class_index = list(model.classes_).index(body_language_class)
-            prob_of_predicted_class = body_language_prob[class_index]
-            if prob_of_predicted_class * 100 > 70:
-                print(
-                    f"Predicted Class: {body_language_class}, Probability: {prob_of_predicted_class*100}%"
-                )
-                coords = tuple(
-                    np.multiply(
+            try:
+                # Pose
+                if "pose" in model_name and results.pose_landmarks:
+                    pose = results.pose_landmarks.landmark
+                    pose_row = list(
                         np.array(
-                            (
-                                results.pose_landmarks.landmark[
-                                    self.mp_holistic.PoseLandmark.LEFT_EAR
-                                ].x,
-                                results.pose_landmarks.landmark[
-                                    self.mp_holistic.PoseLandmark.LEFT_EAR
-                                ].y,
-                            )
+                            [
+                                [
+                                    landmark.x,
+                                    landmark.y,
+                                    landmark.z,
+                                    landmark.visibility,
+                                ]
+                                for landmark in pose
+                            ]
+                        ).flatten()
+                    )
+                    row = pose_row
+
+                # RightHand
+                elif "right_hand" in model_name and results.right_hand_landmarks:
+                    hand = results.right_hand_landmarks.landmark
+                    hand_row = list(
+                        np.array(
+                            [
+                                [
+                                    landmark.x,
+                                    landmark.y,
+                                    landmark.z,
+                                    landmark.visibility,
+                                ]
+                                for landmark in hand
+                            ]
+                        ).flatten()
+                    )
+                    row = hand_row
+
+                # LeftHand
+                elif "left_hand" in model_name and results.left_hand_landmarks:
+                    hand = results.left_hand_landmarks.landmark
+                    hand_row = list(
+                        np.array(
+                            [
+                                [
+                                    landmark.x,
+                                    landmark.y,
+                                    landmark.z,
+                                    landmark.visibility,
+                                ]
+                                for landmark in hand
+                            ]
+                        ).flatten()
+                    )
+                    row = hand_row
+
+                else:
+                    continue
+                print(f"Length of row: {len(row)}")
+                print(f"Number of columns: {len(self.feature_names[model_name])}")    
+                X = pd.DataFrame([row], columns=self.feature_names[model_name])
+   
+
+                try:
+                    body_language_class = model.predict(X)[0]
+                    body_language_prob = model.predict_proba(X)[0]
+                except Exception as e:
+                    print(f"Error predicting class or probability with model '{model_name}': {e}")
+                    
+                class_index = list(model.classes_).index(body_language_class)
+                prob_of_predicted_class = body_language_prob[class_index]
+
+                if prob_of_predicted_class * 100 > 70:
+                    print(
+                        f"Predicted Class: {body_language_class}, Probability: {prob_of_predicted_class*100}%"
+                    )
+                    print(
+                        f"Predicted Class: {body_language_class}, Probability: {prob_of_predicted_class*100}%"
+                    )
+                    coords = tuple(
+                        np.multiply(
+                            np.array(
+                                (
+                                    results.pose_landmarks.landmark[
+                                        self.mp_holistic.PoseLandmark.LEFT_EAR
+                                    ].x,
+                                    results.pose_landmarks.landmark[
+                                        self.mp_holistic.PoseLandmark.LEFT_EAR
+                                    ].y,
+                                )
+                            ),
+                            [640, 480],
+                        ).astype(int)
+                    )
+
+                    cv2.putText(
+                        image,
+                        body_language_class,
+                        coords,
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
+                    # Get status box
+                    cv2.rectangle(image, (0, 0), (250, 60), (245, 117, 16), -1)
+
+                    # Display Class
+                    cv2.putText(
+                        image,
+                        "CLASS",
+                        (95, 12),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 0, 0),
+                        1,
+                        cv2.LINE_AA,
+                    )
+                    cv2.putText(
+                        image,
+                        body_language_class.split(" ")[0],
+                        (90, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+
+                    # Display Probability
+                    cv2.putText(
+                        image,
+                        "PROB",
+                        (15, 12),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 0, 0),
+                        1,
+                        cv2.LINE_AA,
+                    )
+                    cv2.putText(
+                        image,
+                        str(
+                            round(body_language_prob[np.argmax(body_language_prob)], 2)
                         ),
-                        [640, 480],
-                    ).astype(int)
-                )
-                cv2.rectangle(
-                    image,
-                    (coords[0], coords[1] + 5),
-                    (coords[0] + len(body_language_class) * 20, coords[1] - 30),
-                    (245, 117, 16),
-                    -1,
-                )
-                cv2.putText(
-                    image,
-                    body_language_class,
-                    coords,
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-
-                # Get status box
-                cv2.rectangle(image, (0, 0), (250, 60), (245, 117, 16), -1)
-
-                # Display Class
-                cv2.putText(
-                    image,
-                    "CLASS",
-                    (95, 12),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 0, 0),
-                    1,
-                    cv2.LINE_AA,
-                )
-                cv2.putText(
-                    image,
-                    body_language_class.split(" ")[0],
-                    (90, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-
-                # Display Probability
-                cv2.putText(
-                    image,
-                    "PROB",
-                    (15, 12),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 0, 0),
-                    1,
-                    cv2.LINE_AA,
-                )
-                cv2.putText(
-                    image,
-                    str(round(body_language_prob[np.argmax(body_language_prob)], 2)),
-                    (10, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
+                        (10, 40),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
+            except Exception as e:
+                print(f"Error in model '{model_name}': {e}")
+                traceback.print_exc()
+                
 
     def set_class_name(self, class_name):
         """Sets the current class name for exporting."""
         if class_name:  # Ensure that the class name isn't empty
             self.current_class_name = class_name
+
+    def calc_bounding_rect(self, image, landmarks):
+        if landmarks is None:
+            return None
+
+        image_width, image_height = image.shape[1], image.shape[0]
+        landmark_array = np.empty((0, 2), int)
+
+        for _, landmark in enumerate(landmarks.landmark):
+            landmark_x = min(int(landmark.x * image_width), image_width - 1)
+            landmark_y = min(int(landmark.y * image_height), image_height - 1)
+
+            landmark_point = [np.array((landmark_x, landmark_y))]
+
+            landmark_array = np.append(landmark_array, landmark_point, axis=0)
+
+        x, y, w, h = cv2.boundingRect(landmark_array)
+
+        return [x, y, x + w, y + h]
+
+    def draw_bounding_rect(self, use_brect, image, brect):
+        if use_brect:
+            # Outer rectangle
+            cv2.rectangle(
+                image, (brect[0], brect[1]), (brect[2], brect[3]), (0, 0, 0), 2
+            )
+        return image

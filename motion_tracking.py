@@ -430,107 +430,19 @@ class Track_Object:
 
                 else:
                     continue
-                print(f"Length of row: {len(row)}")
-                print(f"Number of columns: {len(self.feature_names[model_name])}")    
                 X = pd.DataFrame([row], columns=self.feature_names[model_name])
-   
+                
+                y_pred = model.predict(X)
+                if y_pred[0] == 1: 
+                    print(f"A match for {model_name} has been found.")
 
-                try:
-                    body_language_class = model.predict(X)[0]
-                    body_language_prob = model.predict_proba(X)[0]
-                except Exception as e:
-                    print(f"Error predicting class or probability with model '{model_name}': {e}")
-                    
-                class_index = list(model.classes_).index(body_language_class)
-                prob_of_predicted_class = body_language_prob[class_index]
-
-                if prob_of_predicted_class * 100 > 70:
-                    print(
-                        f"Predicted Class: {body_language_class}, Probability: {prob_of_predicted_class*100}%"
-                    )
-                    print(
-                        f"Predicted Class: {body_language_class}, Probability: {prob_of_predicted_class*100}%"
-                    )
-                    coords = tuple(
-                        np.multiply(
-                            np.array(
-                                (
-                                    results.pose_landmarks.landmark[
-                                        self.mp_holistic.PoseLandmark.LEFT_EAR
-                                    ].x,
-                                    results.pose_landmarks.landmark[
-                                        self.mp_holistic.PoseLandmark.LEFT_EAR
-                                    ].y,
-                                )
-                            ),
-                            [640, 480],
-                        ).astype(int)
-                    )
-
-                    cv2.putText(
-                        image,
-                        body_language_class,
-                        coords,
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1,
-                        (255, 255, 255),
-                        2,
-                        cv2.LINE_AA,
-                    )
-
-                    # Get status box
-                    cv2.rectangle(image, (0, 0), (250, 60), (245, 117, 16), -1)
-
-                    # Display Class
-                    cv2.putText(
-                        image,
-                        "CLASS",
-                        (95, 12),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 0, 0),
-                        1,
-                        cv2.LINE_AA,
-                    )
-                    cv2.putText(
-                        image,
-                        body_language_class.split(" ")[0],
-                        (90, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1,
-                        (255, 255, 255),
-                        2,
-                        cv2.LINE_AA,
-                    )
-
-                    # Display Probability
-                    cv2.putText(
-                        image,
-                        "PROB",
-                        (15, 12),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
-                        (0, 0, 0),
-                        1,
-                        cv2.LINE_AA,
-                    )
-                    cv2.putText(
-                        image,
-                        str(
-                            round(body_language_prob[np.argmax(body_language_prob)], 2)
-                        ),
-                        (10, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1,
-                        (255, 255, 255),
-                        2,
-                        cv2.LINE_AA,
-                    )
             except Exception as e:
                 print(f"Error in model '{model_name}': {e}")
-                traceback.print_exc()
+                traceback.print_exc()      
+        
+            
                 
-
+    
     def set_class_name(self, class_name):
         """Sets the current class name for exporting."""
         if class_name:  # Ensure that the class name isn't empty

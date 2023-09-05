@@ -63,7 +63,7 @@ class Track_Object:
 
     def get_csv_path_pose(self):
         """Returns the path to the Pose CSV for the current class."""
-        return os.path.join(CSV_DIR, f"pose_coords_{self.current_class_name}.csv")
+        return os.path.join(CSV_DIR, f"body_pose_coords_{self.current_class_name}.csv")
 
     def get_csv_path_right_hand(self):
         """Returns the path to the Hand CSV for the current class."""
@@ -223,6 +223,11 @@ class Track_Object:
 
         # Log pose landmarks if checkbox is checked
         if self.exportingBodyPose and results.pose_landmarks:
+            feature_path = self.get_feature_path()
+            if not os.path.exists(feature_path):
+                with open(feature_path, mode="w", newline="") as f:
+                    for val in landmarks_pose[1:]:
+                        f.write(val + "\n")
             if not os.path.exists(self.get_csv_path_pose()):
                 with open(self.get_csv_path_pose(), mode="w", newline="") as f:
                     csv_writer = csv.writer(
@@ -255,7 +260,7 @@ class Track_Object:
             feature_path = self.get_feature_path()
             if not os.path.exists(feature_path):
                 with open(feature_path, mode="w", newline="") as f:
-                    for val in ["class"] + landmarks_left_hand[1:]:
+                    for val in landmarks_left_hand[1:]:
                         f.write(val + "\n")
             if not os.path.exists(self.get_csv_path_left_hand()):
                 with open(self.get_csv_path_left_hand(), mode="w", newline="") as f:
@@ -290,7 +295,7 @@ class Track_Object:
             feature_path = self.get_feature_path()
             if not os.path.exists(feature_path):
                 with open(feature_path, mode="w", newline="") as f:
-                    for val in ["class"] + landmarks_right_hand[1:]:
+                    for val in landmarks_right_hand[1:]:
                         print(f"Writing: {val}")
                         f.write(val + "\n")
                   
@@ -389,7 +394,7 @@ class Track_Object:
         for model_name, model in self.models.items():
             try:
                 # Pose
-                if "pose" in model_name and results.pose_landmarks:
+                if "body_pose" in model_name and results.pose_landmarks:
                     pose = results.pose_landmarks.landmark
                     pose_row = list(
                         np.array(
@@ -536,7 +541,7 @@ class Track_Object:
                             cv2.LINE_AA,
                         )
 
-                if model_name == "right_hand" and prob_of_predicted_class * 100 > 70:
+                if model_name == "body_pose" and prob_of_predicted_class * 100 > 70:
                         print(
                             f"Predicted Class: {body_language_class}, Probability: {prob_of_predicted_class*100}%"
                         )

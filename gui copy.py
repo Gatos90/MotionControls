@@ -1,3 +1,24 @@
+import cv2
+import os
+import threading
+import time
+from queue import Queue
+from PyQt5.QtCore import QTimer, Qt, pyqtSignal
+from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QFrame,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMainWindow,
+    QPushButton,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 from tkinter import *
 import cv2
 from PIL import Image, ImageTk
@@ -16,7 +37,9 @@ from tkinter import ttk
 from PIL import ImageSequence
 
 
+
 MAX_QUEUE_SIZE = 10
+
 
 def list_csv_files_by_sector(directory="models/cords/"):
     body_pose_files = []
@@ -128,182 +151,129 @@ def read_csv_and_draw(selected_file):
 
 
 class VideoCaptureThread(threading.Thread):
-    def __init__(self, queue, callback_fps):  # Add queue as a parameter
+    def __init__(self, queue, callback_fps):
         super().__init__()
-        self.queue = queue  # Assign the queue to an instance variable
+        self.queue = queue
         self.callback_fps = callback_fps
-        self.tracker = Track_Object()
 
     def run(self):
         video_capture = cv2.VideoCapture(1)
         video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 540)
         video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
-        prev_frame_time = 0
-        new_frame_time = 0
         while True:
             _, frame = video_capture.read()
-            tracked_frame = self.tracker.process_image(frame)
-
-            # Check if tracked_frame is None before attempting to continue
-            if tracked_frame is None:
-                continue
-
-            # FPS Calculation
-            new_frame_time = time.time()
-            fps = 1 / (new_frame_time - prev_frame_time)
-            prev_frame_time = new_frame_time
-            self.callback_fps(int(fps))
 
             if self.queue.qsize() < MAX_QUEUE_SIZE:
-                self.queue.put(
-                    ("frame", tracked_frame)
-                )  # Put the tracked frame into the queue
+                self.queue.put(("frame", frame))
 
 
-class Window(Frame):
-    def __init__(self, master=None):
-        Frame.__init__(self, master)
-        self.master = master
-        self.pack(fill=BOTH, expand=1)
-        self.X_train = None
-        
-        notebook = ttk.Notebook(self)  # Create a notebook object
+class App(QMainWindow):
+    update_image_signal = pyqtSignal(QImage)
 
-        # Create frames to act as the contents of your tabs
-        tab1 = Frame(notebook)  
-        tab2 = Frame(notebook)
-
-        # Add these frames to your notebook
-        notebook.add(tab1, text="Train a Model")
-        notebook.add(tab2, text="Your Models")
-
-        # Place the notebook itself
-        notebook.pack(expand=1, fill="both")
-
-        self.left_hand_var = BooleanVar()
-        self.right_hand_var = BooleanVar()
-        self.body_var = BooleanVar()
-
-        self.event_log = Listbox( tab1, height=8, width=50)
-        self.scrollbar = Scrollbar( tab1, orient="vertical")
-        self.event_log.configure(yscrollcommand=self.scrollbar.set)
-        self.scrollbar.config(command=self.event_log.yview)
-
-        self.scrollbar.pack(side="right", fill="y")
-        self.event_log.pack(side="left")
-
-        self.image_label = Label( tab1,)
-        self.image_label.pack()
-
-        self.class_name_var = StringVar()
-        self.class_name_var.trace("w", self.validate_class_name)
-
-        self.class_name_entry = Entry( tab1, textvariable=self.class_name_var)
-        self.class_name_entry.pack(pady=5)
-
-        self.start_export_button = Button(
-             tab1,
-            text="Start Export",
-            command=self.set_class_and_start_export,
-            state=DISABLED,
-        )
-        self.start_export_button.pack()
-
-        self.queue = Queue() 
-        self.thread = VideoCaptureThread(
-            self.queue, self.update_fps
-        )  
+    def __init__(self):
+        super(App, self).__init__()
+        self.queue = Queue()
+        self.thread = VideoCaptureThread(self.queue, self.update_fps)
         self.thread.start()
+        self.initUI()
 
-        self.show_video = True
+    def initUI(self):
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
 
-        self.class_name_label = Label( tab1, text="Class Name:")
-        self.class_name_label.pack(pady=5)  
+        self.layout = QVBoxLayout() # Initializing `self.layout`
 
-        self.left_hand_cb = Checkbutton(
-            tab1,
-            text="Left Hand",
-            variable=self.left_hand_var,
-            command=self.update_checkbox,
+        self.tab_train_layout = QVBoxLayout()
+        self.tab_models_layout = QVBoxLayout()
+
+        self.body_pose_listbox = QListWidget(self)
+        self.left_hand_listbox = QListWidget(self)
+        self.right_hand_listbox = QListWidget(self)
+
+        self.update_file_lists_button = QPushButton("Update File Lists")
+        self.update_file_lists_button.clicked.connect(self.update_file_lists)
+
+        self.tab_models_layout.addWidget(self.update_file_lists_button)
+        self.tab_models_layout.addWidget(self.body_pose_listbox)
+        self.tab_models_layout.addWidget(self.left_hand_listbox)
+        self.tab_models_layout.addWidget(self.right_hand_listbox)
+
+
+        self.tabs = QTabWidget()
+        self.layout.addWidget(self.tabs)
+
+        self.tab_train = QWidget()
+        self.tab_models = QWidget()
+
+        self.tabs.addTab(self.tab_train, "Train a Model")
+        self.tabs.addTab(self.tab_models, "Your Models")
+
+        self.tab_train.setLayout(self.tab_train_layout)
+        self.tab_models.setLayout(self.tab_models_layout)
+
+        self.label = QLabel()
+        self.layout.addWidget(self.label)
+
+        self.textbox = QLineEdit(self)
+        self.layout.addWidget(self.textbox)
+
+        self.train_button = QPushButton("Toggle Video")
+        self.layout.addWidget(self.train_button)
+
+        self.train_button = QPushButton("Start Export")
+        self.layout.addWidget(self.train_button)
+
+        self.train_button = QPushButton("Stop Export")
+        self.layout.addWidget(self.train_button)
+
+        self.checkbox = QCheckBox("Left Hand")
+        self.layout.addWidget(self.checkbox)
+
+        self.checkbox = QCheckBox("Right Hand")
+        self.layout.addWidget(self.checkbox)
+
+        self.checkbox = QCheckBox("Body")
+        self.layout.addWidget(self.checkbox)
+
+        self.list_widget = QListWidget(self)
+        self.layout.addWidget(self.list_widget)
+
+        self.train_button = QPushButton("Train and Save Model")
+        self.layout.addWidget(self.train_button)
+
+        self.central_widget.setLayout(self.layout)
+
+        self.setWindowTitle("Your App")
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_image)
+        self.timer.start(100)
+
+        self.show()
+
+
+    def update_image(self):
+        while not self.queue.empty():
+            item_type, item_data = self.queue.get()
+            if item_type == "frame":
+                self.display_frame(item_data)
+
+    def display_frame(self, frame):
+        qt_image = self.convert_to_qt_image(frame)
+        self.label.setPixmap(QPixmap.fromImage(qt_image))
+
+    def convert_to_qt_image(self, cv_img):
+        rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb_image.shape
+        bytes_per_line = ch * w
+        qt_image = QImage(
+            rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888
         )
-        self.left_hand_cb.pack()
+        return qt_image
 
-        self.right_hand_cb = Checkbutton(
-            tab1,
-            text="Right Hand",
-            variable=self.right_hand_var,
-            command=self.update_checkbox,
-        )
-        self.right_hand_cb.pack()
+    def update_fps(self, fps):
+        pass  # Implement your function to update fps here
 
-        self.body_cb = Checkbutton(
-             tab1, text="Body", variable=self.body_var, command=self.update_checkbox
-        )
-        self.body_cb.pack()
-
-        self.start_export_button.pack()
-
-        self.toggle_button = Button(
-             tab1, text="Toggle Video", command=self.thread.tracker.should_show_video
-        )
-        self.toggle_button.pack()
-
-        self.stop_export_button = Button(
-             tab1, text="Stop Export", command=self.thread.tracker.stop_export
-        )
-        self.stop_export_button.pack()
-
-        self.train_model_button = Button(
-            tab1,
-            text="Train and Save Model",
-            command=self.thread.tracker.start_training,
-        )
-        self.train_model_button.pack()
-
-        self.after(100, self.check_queue)   
-      
-        self.update_file_lists_button = Button(tab2, text="Update File Lists", command=self.update_file_lists)
-        self.update_file_lists_button.pack()
-
-        self.body_pose_listbox = Listbox(tab2)
-        self.left_hand_listbox = Listbox(tab2)
-        self.right_hand_listbox = Listbox(tab2)
-                
-        self.body_pose_listbox.pack()
-        self.left_hand_listbox.pack()
-        self.right_hand_listbox.pack()
-
-        self.update_file_lists()
-
-
-    def display_gif(self, gif_path, selected_file):
-        try:
-            im = Image.open(gif_path)
-            self.frames = []
-            self.gif_label = Label(self.master)
-            self.gif_label.pack(side="right", padx=10)
-            
-            im = Image.open(gif_path)
-            sequence = [ImageTk.PhotoImage(im_frame) for im_frame in ImageSequence.Iterator(im)]
-            self.frames = sequence
-            self.current_frame = 0
-            self.gif_label.config(image=self.frames[self.current_frame])
-            self.master.after(100, self.update_gif)
-        except FileNotFoundError:
-            print(f"{gif_path} not found. Generating...")
-            read_csv_and_draw(selected_file)  # Assuming this is the method that generates the gif
-            try:
-                im = Image.open(gif_path)
-                # rest of your code to display gif
-            except Exception as e:
-                print(f"An error occurred: {e}")    
-
-    def update_gif(self):
-        self.current_frame = (self.current_frame + 1) % len(self.frames)
-        self.gif_label.config(image=self.frames[self.current_frame])
-        self.master.after(100, self.update_gif)
-
-    
     def update_checkbox(self):
         is_left_hand_checked = self.left_hand_var.get()
         is_right_hand_checked = self.right_hand_var.get()
@@ -354,31 +324,8 @@ class Window(Frame):
                 self.log_event(
                     f"FPS updated to {item_data}"
                 )  # Update FPS in the main thread
-        self.after(100, self.check_queue)  # Keep checking the queue
-
-    def update_image(self, cv_img):
-        if self.show_video:
-            img = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
-            imgtk = ImageTk.PhotoImage(image=img)
-
-            self.image_label.config(image=imgtk)
-            self.image_label.image = imgtk
-
-    def toggle_video(self):
-        self.show_video = not self.show_video
-        if self.show_video:
-            self.image_label.pack()
-        else:
-            self.image_label.pack_forget()
-            self.log_event(f"Video toggled {'on' if self.show_video else 'off'}")
-
-    def update_fps(self, fps):
-        self.log_event(f"FPS updated to {fps}")
-
-    def log_event(self, event):
-        timestamp = time.strftime("%H:%M:%S", time.localtime())
-        self.event_log.insert(0, f"{timestamp}: {event}")
-
+        self.after(100, self.check_queue)  # Keep checking the queue    
+        
     def set_class_and_start_export(self):
         class_name = self.class_name_entry.get()  # Get the entered class name
         self.thread.tracker.set_class_name(class_name)
@@ -389,12 +336,11 @@ class Window(Frame):
         if class_name:
             self.start_export_button.config(state=NORMAL)  # Enable the button
         else:
-            self.start_export_button.config(state=DISABLED)
-
-
+            self.start_export_button.config(state=DISABLED)        
+        
 if __name__ == "__main__":
-    root = Tk()
-    app = Window(root)
-    root.wm_title("Tkinter window")
-    root.geometry("600x450")
-    root.mainloop()
+    import sys
+
+    app = QApplication(sys.argv)
+    ex = App()
+    sys.exit(app.exec_())

@@ -1,63 +1,180 @@
-from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout
-from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot
+from tkinter import *
 import cv2
-import numpy as np
+from PIL import Image, ImageTk
 from motion_tracking import Track_Object
-import time  # Added for FPS calculation
+import time
+import threading
+from queue import Queue  # Import the Queue class
 
 
-class ThreadClass(QThread):
-    send_image = pyqtSignal(np.ndarray)
-    FPS = pyqtSignal(int)  # Signal for FPS
+MAX_QUEUE_SIZE = 10
+
+
+class VideoCaptureThread(threading.Thread):
+    def __init__(self, queue, callback_fps):  # Add queue as a parameter
+        super().__init__()
+        self.queue = queue  # Assign the queue to an instance variable
+        self.callback_fps = callback_fps
+        self.tracker = Track_Object()
 
     def run(self):
-        video_capture = cv2.VideoCapture(0)
-        tracker = Track_Object()
+        video_capture = cv2.VideoCapture(1)
+        video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 540)
+        video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
         prev_frame_time = 0
         new_frame_time = 0
         while True:
             _, frame = video_capture.read()
-            tracked_frame = tracker.process_image(frame)
-            
+            tracked_frame = self.tracker.process_image(frame)
+
+            # Check if tracked_frame is None before attempting to continue
+            if tracked_frame is None:
+                continue
+
             # FPS Calculation
             new_frame_time = time.time()
             fps = 1 / (new_frame_time - prev_frame_time)
             prev_frame_time = new_frame_time
-            self.FPS.emit(int(fps))
-            
-            if tracked_frame is not None:
-                self.send_image.emit(tracked_frame)
+            self.callback_fps(int(fps))
+
+            if self.queue.qsize() < MAX_QUEUE_SIZE:
+                self.queue.put(
+                    ("frame", tracked_frame)
+                )  # Put the tracked frame into the queue
 
 
-class Window(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.image_label = QLabel(self)
-        layout = QVBoxLayout()
-        layout.addWidget(self.image_label)
-        self.setLayout(layout)
+class Window(Frame):
+    def __init__(self, master=None):
+        Frame.__init__(self, master)
+        self.master = master
+        self.pack(fill=BOTH, expand=1)
+        self.X_train = None
+        
+        self.left_hand_var = BooleanVar()
+        self.right_hand_var = BooleanVar()
+        self.body_var = BooleanVar()
 
-        self.thread = ThreadClass()
-        self.thread.send_image.connect(self.update_image)
-        self.thread.FPS.connect(self.update_fps)  # Connect the FPS signal
+        self.event_log = Listbox(self, height=8, width=50)
+        self.scrollbar = Scrollbar(self, orient="vertical")
+        self.event_log.configure(yscrollcommand=self.scrollbar.set)
+        self.scrollbar.config(command=self.event_log.yview)
+
+        self.scrollbar.pack(side="right", fill="y")
+        self.event_log.pack(side="left")
+
+        self.image_label = Label(self)
+        self.image_label.pack()
+
+        self.class_name_var = StringVar()
+        self.class_name_var.trace('w', self.validate_class_name)
+
+        self.class_name_entry = Entry(self, textvariable=self.class_name_var)
+        self.class_name_entry.pack(pady=5)
+
+        self.start_export_button = Button(
+            self, text="Start Export", command=self.set_class_and_start_export, state=DISABLED
+        )
+        self.start_export_button.pack()
+
+        self.queue = Queue()  # Create a queue instance
+        self.thread = VideoCaptureThread(
+            self.queue, self.update_fps
+        )  # Pass the queue to the thread
         self.thread.start()
 
-    @pyqtSlot(np.ndarray)
+        self.show_video = True
+
+        self.class_name_label = Label(self, text="Class Name:")
+        self.class_name_label.pack(pady=5)  # add some padding for aesthetics
+        
+        self.left_hand_cb = Checkbutton(self, text="Left Hand", variable=self.left_hand_var, command= self.update_checkbox)
+        self.left_hand_cb.pack()
+
+        self.right_hand_cb = Checkbutton(self, text="Right Hand", variable=self.right_hand_var, command= self.update_checkbox)
+        self.right_hand_cb.pack() 
+
+        self.body_cb = Checkbutton(self, text="Body", variable=self.body_var, command= self.update_checkbox)
+        self.body_cb.pack()
+            
+        self.start_export_button.pack()
+
+        self.toggle_button = Button(
+            self, text="Toggle Video", command=self.thread.tracker.should_show_video
+        )
+        self.toggle_button.pack()
+
+        self.stop_export_button = Button(
+            self, text="Stop Export", command=self.thread.tracker.stop_export
+        )
+        self.stop_export_button.pack()
+
+        self.train_model_button = Button(
+            self,
+            text="Train and Save Model",
+            command=self.thread.tracker.start_training,
+        )
+        self.train_model_button.pack()
+
+        self.after(100, self.check_queue)  # Start checking the queue
+
+    def update_checkbox(self):
+        is_left_hand_checked = self.left_hand_var.get()
+        is_right_hand_checked = self.right_hand_var.get()
+        is_body_checked = self.body_var.get()
+       
+        self.thread.tracker.set_export_left_hand(True if is_left_hand_checked else False)
+        self.thread.tracker.set_export_right_hand(True if is_right_hand_checked else False)
+        self.thread.tracker.set_export_body_pose(True if is_body_checked else False)
+    
+    def check_queue(self):
+        while not self.queue.empty():
+            item_type, item_data = self.queue.get()
+            if item_type == "frame":
+                self.update_image(item_data)
+            elif item_type == "fps":
+                self.log_event(
+                    f"FPS updated to {item_data}"
+                )  # Update FPS in the main thread
+        self.after(100, self.check_queue)  # Keep checking the queue
+
     def update_image(self, cv_img):
-        height, width, channel = cv_img.shape
-        bytes_per_line = 3 * width
-        qt_image = QImage(cv_img.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
-        self.image_label.setPixmap(QPixmap.fromImage(qt_image))
+        if self.show_video:
+            img = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
+            imgtk = ImageTk.PhotoImage(image=img)
 
-    @pyqtSlot(int)
+            self.image_label.config(image=imgtk)
+            self.image_label.image = imgtk
+
+    def toggle_video(self):
+        self.show_video = not self.show_video
+        if self.show_video:
+            self.image_label.pack()
+        else:
+            self.image_label.pack_forget()
+            self.log_event(f"Video toggled {'on' if self.show_video else 'off'}")
+
     def update_fps(self, fps):
-        # You can update a label or any other widget with the FPS value here.
-        pass
+        self.log_event(f"FPS updated to {fps}")
 
+    def log_event(self, event):
+        timestamp = time.strftime("%H:%M:%S", time.localtime())
+        self.event_log.insert(0, f"{timestamp}: {event}")
+
+    def set_class_and_start_export(self):
+        class_name = self.class_name_entry.get()  # Get the entered class name
+        self.thread.tracker.set_class_name(class_name)
+        self.thread.tracker.start_export()
+
+    def validate_class_name(self, *args):
+        class_name = self.class_name_entry.get()
+        if class_name:
+            self.start_export_button.config(state=NORMAL)  # Enable the button
+        else:
+            self.start_export_button.config(state=DISABLED)
 
 if __name__ == "__main__":
-    app = QApplication([])
-    win = Window()
-    win.show()
-    app.exec_()
+    root = Tk()
+    app = Window(root)
+    root.wm_title("Tkinter window")
+    root.geometry("600x450")
+    root.mainloop()

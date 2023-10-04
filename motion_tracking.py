@@ -339,7 +339,8 @@ class Track_Object:
         self.should_train = True
 
     def should_show_video(self):
-        self.should_show_image = True
+        self.should_show_image = not self.should_show_image
+
 
     def train_data(self):
         category = ""

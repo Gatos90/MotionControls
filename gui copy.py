@@ -35,6 +35,7 @@ import imageio.v2 as imageio
 import os
 from tkinter import ttk
 from PIL import ImageSequence
+from PyQt5.QtGui import QMovie
 
 
 
@@ -290,28 +291,45 @@ class App(QMainWindow):
     def update_file_lists(self):
         body_pose_files, left_hand_files, right_hand_files = list_csv_files_by_sector()
 
-        self.body_pose_listbox.delete(0, END)
-        self.left_hand_listbox.delete(0, END)
-        self.right_hand_listbox.delete(0, END)
+        # Clear the list widgets before adding new items
+        self.body_pose_listbox.clear()
+        self.left_hand_listbox.clear()
+        self.right_hand_listbox.clear()
 
         for file in body_pose_files:
-            self.body_pose_listbox.insert(END, file)
-        
+            self.body_pose_listbox.addItem(file)
+            
         for file in left_hand_files:
-            self.left_hand_listbox.insert(END, file)
+            self.left_hand_listbox.addItem(file)
 
         for file in right_hand_files:
-            self.right_hand_listbox.insert(END, file)    
+            self.right_hand_listbox.addItem(file)
+        
+        
+        self.body_pose_listbox.addItem(file)
+        self.left_hand_listbox.addItem(file)
+        self.right_hand_listbox.addItem(file)
+
             
-        self.body_pose_listbox.bind('<<ListboxSelect>>', self.on_body_pose_selected)
+        self.body_pose_listbox.itemSelectionChanged.connect(self.on_body_pose_selected)
         
         
-    def on_body_pose_selected(self, event):
-        selected_index = self.body_pose_listbox.curselection()[0]
-        selected_file = self.body_pose_listbox.get(selected_index)
-        gif_file = os.path.splitext(os.path.basename(selected_file))[0] + ".gif"
-        print(f"models/images/{gif_file}")
-        self.display_gif(f"models/images/{gif_file}", selected_file)  
+    def display_gif(self, gif_path, selected_file):
+        movie = QMovie(gif_path)
+        self.label.setMovie(movie)  # Assuming 'self.label' is a QLabel where you want to display the GIF
+        movie.start()
+
+        pass
+            
+        
+    def on_body_pose_selected(self):
+        selected_items = self.body_pose_listbox.selectedItems()
+        if selected_items:
+            selected_file = selected_items[0].text()
+            gif_file = os.path.splitext(os.path.basename(selected_file))[0] + ".gif"
+            print(f"models/images/{gif_file}")
+            self.display_gif(f"models/images/{gif_file}", selected_file)
+
           
     
 
